@@ -1,0 +1,15 @@
+{
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Windows",
+    "venvPath": ".",
+    "venv": "myenv",
+    "include": [
+        "app",
+        "main.py"
+    ],
+    "executionEnvironments": [
+        {
+            "root": "."
+        }
+    ]
+}

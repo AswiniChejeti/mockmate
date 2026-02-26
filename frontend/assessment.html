@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skill Assessment — AI Mock Interview Platform</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+        <div class="container inner">
+            <a href="dashboard.html" class="nav-brand">🎯 AI Mock Interview</a>
+            <div class="nav-links">
+                <a href="dashboard.html" class="nav-link">Dashboard</a>
+                <a href="assessment.html" class="nav-link active">Assessment</a>
+                <a href="interview.html" class="nav-link">Interview</a>
+                <button class="btn btn-outline" onclick="logout()"
+                    style="padding:6px 14px;font-size:0.85rem;">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="page-header">
+                <h2>🧠 Skill Assessment</h2>
+                <p>Test your knowledge with AI-generated questions</p>
+            </div>
+
+            <!-- Step 1: Generate -->
+            <div class="card" id="generate-section">
+                <h3 style="margin-bottom:20px;">Generate MCQ Test</h3>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Select Skill</label>
+                        <select id="skill-select">
+                            <option value="">— Loading your skills... —</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Number of Questions</label>
+                        <select id="num-questions">
+                            <option value="5">5 Questions</option>
+                            <option value="10" selected>10 Questions</option>
+                            <option value="15">15 Questions</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="generateAssessment()" id="gen-btn">
+                    ⚡ Generate Test
+                </button>
+            </div>
+
+            <!-- Step 2: Take Test -->
+            <div id="test-section" style="display:none;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+                    <h3 id="test-title">Assessment</h3>
+                    <span id="test-progress" style="color:var(--text-secondary);font-size:0.9rem;"></span>
+                </div>
+                <div id="questions-container"></div>
+                <div style="margin-top:20px;">
+                    <button class="btn btn-success" onclick="submitAssessment()" id="submit-btn">
+                        ✅ Submit Answers
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 3: Results -->
+            <div id="results-section" style="display:none;">
+                <div class="card" style="text-align:center;margin-bottom:24px;">
+                    <div style="font-size:4rem;margin-bottom:12px;">🏆</div>
+                    <h2 id="result-score" style="font-size:3rem;color:var(--accent);"></h2>
+                    <p id="result-details" style="font-size:1.1rem;margin-top:8px;"></p>
+                    <div style="margin-top:24px;display:flex;gap:12px;justify-content:center;">
+                        <button class="btn btn-primary" onclick="resetAssessment()">🔁 Take Another Test</button>
+                        <a href="dashboard.html" class="btn btn-outline">← Dashboard</a>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script src="static/app.js"></script>
+    <script>
+        requireAuth();
+        let currentAssessmentId = null;
+        let currentQuestions = [];
+
+        async function loadSkills() {
+            try {
+                const data = await apiFetch('/resume/skills');
+                const sel = document.getElementById('skill-select');
+                sel.innerHTML = data.skills.map(s => `<option value="${s}">${s}</option>`).join('');
+            } catch {
+                const sel = document.getElementById('skill-select');
+                sel.innerHTML = '<option value="Python">Python</option><option value="JavaScript">JavaScript</option><option value="SQL">SQL</option>';
+            }
+        }
+
+        async function generateAssessment() {
+            const skill = document.getElementById('skill-select').value;
+            const num = parseInt(document.getElementById('num-questions').value);
+            if (!skill) { toast('Please select a skill', 'error'); return; }
+            const btn = document.getElementById('gen-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating...';
+            try {
+                const data = await apiFetch('/assessment/generate', {
+                    method: 'POST',
+                    body: JSON.stringify({ skill, num_questions: num }),
+                });
+                currentAssessmentId = data.assessment_id;
+                currentQuestions = data.questions;
+                renderQuestions(data.skill, data.questions);
+            } catch (err) {
+                toast(err.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚡ Generate Test';
+            }
+        }
+
+        function renderQuestions(skill, questions) {
+            document.getElementById('generate-section').style.display = 'none';
+            document.getElementById('test-section').style.display = 'block';
+            document.getElementById('test-title').textContent = `📝 ${skill} Assessment`;
+            document.getElementById('test-progress').textContent = `${questions.length} questions`;
+            const container = document.getElementById('questions-container');
+            container.innerHTML = questions.map((q, i) => `
+        <div class="question-card">
+          <div class="question-text">Q${i + 1}. ${q.question}</div>
+          <div class="options">
+            ${q.options.map(opt => `
+              <label class="option-label">
+                <input type="radio" name="q${i}" value="${opt.key}" />
+                <strong>${opt.key}.</strong> ${opt.value}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+        }
+
+        async function submitAssessment() {
+            const answers = currentQuestions.map((_, i) => {
+                const sel = document.querySelector(`input[name="q${i}"]:checked`);
+                return { question_index: i, selected_answer: sel ? sel.value : '' };
+            });
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Evaluating...';
+            try {
+                const data = await apiFetch('/assessment/submit', {
+                    method: 'POST',
+                    body: JSON.stringify({ assessment_id: currentAssessmentId, answers }),
+                });
+                document.getElementById('test-section').style.display = 'none';
+                document.getElementById('results-section').style.display = 'block';
+                const scoreColor = data.score >= 7 ? 'var(--accent-green)' : data.score >= 4 ? 'var(--accent-orange)' : 'var(--danger)';
+                document.getElementById('result-score').innerHTML = `<span style="color:${scoreColor}">${data.score}/10</span>`;
+                document.getElementById('result-details').textContent = `You got ${data.correct_count} out of ${data.total_questions} questions correct in ${data.skill}.`;
+            } catch (err) {
+                toast(err.message, 'error');
+                btn.disabled = false;
+                btn.textContent = '✅ Submit Answers';
+            }
+        }
+
+        function resetAssessment() {
+            document.getElementById('generate-section').style.display = 'block';
+            document.getElementById('results-section').style.display = 'none';
+        }
+
+        loadSkills();
+    </script>
+</body>
+
+</html>

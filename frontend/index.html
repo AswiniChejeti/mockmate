@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — AI Mock Interview Platform</title>
+  <meta name="description" content="Login or register to access AI-powered mock interviews and skill assessments." />
+  <link rel="stylesheet" href="static/style.css" />
+</head>
+<body>
+  <div class="page-center">
+    <div class="auth-card">
+
+      <div class="auth-logo">
+        <span class="logo-icon">🎯</span>
+        <h1>AI Mock Interview</h1>
+        <p>Your AI-powered career coach</p>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('login')">Sign In</button>
+        <button class="tab-btn" onclick="switchTab('register')">Register</button>
+      </div>
+
+      <!-- Alert -->
+      <div id="alert" class="alert"></div>
+
+      <!-- Login Form -->
+      <div id="tab-login" class="tab-panel active">
+        <form id="login-form">
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="login-email" placeholder="you@example.com" required />
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="login-password" placeholder="••••••••" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-full" id="login-btn">
+            Sign In
+          </button>
+        </form>
+      </div>
+
+      <!-- Register Form -->
+      <div id="tab-register" class="tab-panel">
+        <form id="register-form">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="reg-name" placeholder="John Doe" required />
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="reg-email" placeholder="you@example.com" required />
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="reg-password" placeholder="Min 6 characters" required minlength="6" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-full" id="reg-btn">
+            Create Account
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="static/app.js"></script>
+  <script>
+    // If already logged in, redirect to dashboard
+    if (Auth.get()) window.location.href = "dashboard.html";
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById(`tab-${tab}`).classList.add('active');
+      hideAlert();
+    }
+
+    function showAlert(msg, type = 'error') {
+      const el = document.getElementById('alert');
+      el.textContent = msg;
+      el.className = `alert alert-${type} show`;
+    }
+    function hideAlert() {
+      document.getElementById('alert').className = 'alert';
+    }
+
+    // ── Login ─────────────────────────────────────────────
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Signing in...';
+      hideAlert();
+      try {
+        const data = await apiFetch('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            email: document.getElementById('login-email').value,
+            password: document.getElementById('login-password').value,
+          }),
+        });
+        Auth.save(data.access_token);
+        window.location.href = 'dashboard.html';
+      } catch (err) {
+        showAlert(err.message);
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+    });
+
+    // ── Register ──────────────────────────────────────────
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('reg-btn');
+      btn.disabled = true;
+      btn.textContent = 'Creating account...';
+      hideAlert();
+      try {
+        await apiFetch('/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            full_name: document.getElementById('reg-name').value,
+            email: document.getElementById('reg-email').value,
+            password: document.getElementById('reg-password').value,
+          }),
+        });
+        showAlert('Account created! Please sign in.', 'success');
+        document.getElementById('register-form').reset();
+        setTimeout(() => {
+          document.querySelector('.tab-btn').click();
+        }, 1500);
+      } catch (err) {
+        showAlert(err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
+      }
+    });
+  </script>
+</body>
+</html>
