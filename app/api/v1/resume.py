@@ -17,7 +17,7 @@ from app.models.user import User
 from app.schemas.resume import ResumeOut, SkillsOut
 from app.crud.resume import create_resume, get_latest_resume, get_all_resumes
 from app.services.resume_service import extract_text_from_pdf, save_uploaded_file
-from app.services.ai_service import extract_skills
+from app.services.ai_service import extract_resume_data
 
 import json
 
@@ -37,10 +37,10 @@ async def upload_resume(
       1. Validates the file is a PDF
       2. Saves it to the /uploads directory with a unique name
       3. Extracts all text from the PDF using pdfplumber
-      4. Sends the text to the AI to identify skills
+      4. Sends the text to the AI to identify skills, experience, and education
       5. Saves everything to the database
 
-    Returns the resume record with extracted skills.
+    Returns the resume record with extracted arrays.
     """
     # Validate file type
     if not file.filename.lower().endswith(".pdf"):
@@ -71,8 +71,8 @@ async def upload_resume(
             detail="The uploaded PDF appears to be empty or scanned (image-based). Please upload a text-based PDF.",
         )
 
-    # Ask AI to extract skills from the resume text
-    skills = extract_skills(extracted_text)
+    # Ask AI to extract data from the resume text
+    ai_data = extract_resume_data(extracted_text)
 
     # Save to database
     db_resume = create_resume(
@@ -81,13 +81,17 @@ async def upload_resume(
         filename=file.filename,
         file_path=file_path,
         extracted_text=extracted_text,
-        skills=skills,
+        skills=ai_data.get("skills", []),
+        experience=ai_data.get("experience", []),
+        education=ai_data.get("education", []),
     )
 
     return ResumeOut(
         id=db_resume.id,
         filename=db_resume.filename,
-        skills=skills,
+        skills=ai_data.get("skills", []),
+        experience=ai_data.get("experience", []),
+        education=ai_data.get("education", []),
         uploaded_at=db_resume.uploaded_at,
     )
 
@@ -122,5 +126,15 @@ def get_all_my_resumes(
     result = []
     for r in resumes:
         skills = json.loads(r.skills_json) if r.skills_json else []
-        result.append(ResumeOut(id=r.id, filename=r.filename, skills=skills, uploaded_at=r.uploaded_at))
+        exp = json.loads(r.experience_json) if getattr(r, 'experience_json', None) else []
+        edu = json.loads(r.education_json) if getattr(r, 'education_json', None) else []
+        
+        result.append(ResumeOut(
+            id=r.id, 
+            filename=r.filename, 
+            skills=skills, 
+            experience=exp,
+            education=edu,
+            uploaded_at=r.uploaded_at
+        ))
     return result

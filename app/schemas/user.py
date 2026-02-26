@@ -15,6 +15,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     full_name: str
     password: str
+    face_image: Optional[str] = None   # base64-encoded webcam photo (optional)
 
 
 class UserLogin(BaseModel):
@@ -28,6 +29,7 @@ class UserOut(BaseModel):
     id: int
     email: str
     full_name: str
+    phone_number: Optional[str] = None
     is_active: bool
     created_at: Optional[datetime] = None
 
@@ -38,6 +40,7 @@ class UserOut(BaseModel):
 class UserUpdate(BaseModel):
     """Used for PUT /profile — all fields are optional."""
     full_name: Optional[str] = None
+    phone_number: Optional[str] = None
     password: Optional[str] = None
 
 

@@ -12,7 +12,6 @@ Then open: http://127.0.0.1:8000/docs  (Swagger UI)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
 from app.db.database import engine, Base
@@ -53,12 +52,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Mount static frontend files ──────────────────────────────────────────────
-app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
-
 # ─── Include all API routes (prefixed with /api/v1) ──────────────────────────
+from fastapi.staticfiles import StaticFiles
+import os
+
 app.include_router(api_router, prefix="/api/v1")
 
+# Mount static files for videos
+os.makedirs("uploads/interviews", exist_ok=True)
+app.mount("/videos", StaticFiles(directory="uploads/interviews"), name="videos")
 
 # ─── Root health check ────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
@@ -72,6 +74,30 @@ def root():
     }
 
 
+def _free_port(port: int = 8000):
+    """Kill every process bound to *port* using netstat (works on any IP)."""
+    import subprocess, os, sys
+    if sys.platform != "win32":
+        return
+    result = subprocess.run(
+        f"netstat -ano | findstr :{port}",
+        shell=True, capture_output=True, text=True
+    )
+    killed = set()
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        last = parts[-1]
+        if last.isdigit():
+            proc_id = int(last)
+            if proc_id != os.getpid() and proc_id not in killed:
+                subprocess.run(f"taskkill /F /PID {proc_id}",
+                               shell=True, capture_output=True)
+                print(f"[Startup] Freed port {port} — killed PID {proc_id}")
+                killed.add(proc_id)
+
+
 if __name__ == "__main__":
-    
-    uvicorn.run(app, host="192.168.0.57", port=8000)
+    _free_port(8000)
+    uvicorn.run("main:app", host="192.168.0.57", port=8000, reload=True)

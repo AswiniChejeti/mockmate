@@ -5,7 +5,7 @@ SQLAlchemy model for the `interview_sessions` table.
 Stores AI mock interview sessions including questions, answers, and AI feedback.
 """
 
-from sqlalchemy import Column, Integer, Text, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, Text, Float, ForeignKey, DateTime, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -21,6 +21,7 @@ class InterviewSession(Base):
     answers_json    = Column(Text, nullable=True)    # JSON: user's text answers
     feedback_json   = Column(Text, nullable=True)    # JSON: AI feedback per question
     overall_score   = Column(Float, default=0.0)     # 0–10 score
+    video_url       = Column(String(500), nullable=True) # S3 or local path
     conducted_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationship back to user

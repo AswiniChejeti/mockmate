@@ -36,6 +36,8 @@ def get_dashboard_stats(
     # --- Resume / Skills ---
     resume = get_latest_resume(db=db, user_id=current_user.id)
     skills = json.loads(resume.skills_json) if (resume and resume.skills_json) else []
+    experience = json.loads(resume.experience_json) if (resume and getattr(resume, 'experience_json', None)) else []
+    education = json.loads(resume.education_json) if (resume and getattr(resume, 'education_json', None)) else []
 
     # --- Assessments ---
     assessments = get_user_assessments(db=db, user_id=current_user.id)
@@ -60,6 +62,7 @@ def get_dashboard_stats(
         {
             "id": i.id,
             "overall_score": i.overall_score,
+            "video_url": i.video_url,
             "conducted_at": i.conducted_at.isoformat() if i.conducted_at else None,
         }
         for i in interviews
@@ -78,6 +81,8 @@ def get_dashboard_stats(
         "resume": {
             "uploaded": resume is not None,
             "skills": skills,
+            "experience": experience,
+            "education": education,
             "skill_count": len(skills),
         },
         "assessments": {

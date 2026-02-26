@@ -59,6 +59,11 @@ class AssessmentResultOut(BaseModel):
     correct_count: int
     taken_at: Optional[datetime] = None
 
+class AssessmentDetailOut(AssessmentResultOut):
+    """Detailed response for assessment history."""
+    questions_data: list = []  # Detailed questions
+    answers_data: list = []    # Detailed answers
+
     class Config:
         from_attributes = True
 

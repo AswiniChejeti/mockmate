@@ -1,31 +1,50 @@
-import { Navbar as BsNavbar, Nav, Container, Button } from 'react-bootstrap';
-import { Link, useNavigate } from 'react-router-dom';
+import { Navbar as BsNavbar, Nav, Container } from 'react-bootstrap';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { confirm, toast } from '../utils/swal';
 
 export default function Navbar() {
     const { logoutUser } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
 
-    const handleLogout = () => {
-        logoutUser();
-        navigate('/login');
+    const handleLogout = async () => {
+        const result = await confirm('Sign Out?', 'Are you sure you want to log out?', 'Sign Out');
+        if (result.isConfirmed) {
+            logoutUser();
+            toast('success', 'Logged out successfully');
+            navigate('/login');
+        }
     };
 
+    const isActive = (path) => location.pathname === path;
+
     return (
-        <BsNavbar bg="white" expand="lg" className="shadow-sm mb-4">
+        <BsNavbar expand="lg" className="app-navbar mb-4">
             <Container>
-                <BsNavbar.Brand as={Link} to="/dashboard">🎯 AI Mock Interview</BsNavbar.Brand>
-                <BsNavbar.Toggle aria-controls="basic-navbar-nav" />
-                <BsNavbar.Collapse id="basic-navbar-nav">
-                    <Nav className="me-auto">
-                        <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
-                        <Nav.Link as={Link} to="/assessment">Assessment</Nav.Link>
-                        <Nav.Link as={Link} to="/interview">Interview</Nav.Link>
+                <BsNavbar.Brand as={Link} to="/dashboard">
+                    🎯 MockMate
+                </BsNavbar.Brand>
+                <BsNavbar.Toggle aria-controls="main-nav" style={{ borderColor: 'rgba(255,255,255,0.2)' }} />
+                <BsNavbar.Collapse id="main-nav">
+                    <Nav className="me-auto gap-1">
+                        <Nav.Link as={Link} to="/dashboard" className={isActive('/dashboard') ? 'active' : ''}>
+                            📊 Dashboard
+                        </Nav.Link>
+                        <Nav.Link as={Link} to="/assessment" className={isActive('/assessment') ? 'active' : ''}>
+                            🧠 Assessment
+                        </Nav.Link>
+                        <Nav.Link as={Link} to="/interview" className={isActive('/interview') ? 'active' : ''}>
+                            🎤 Interview
+                        </Nav.Link>
+                        <Nav.Link as={Link} to="/profile" className={isActive('/profile') ? 'active' : ''}>
+                            👤 Profile
+                        </Nav.Link>
                     </Nav>
                     <Nav>
-                        <Button variant="outline-secondary" size="sm" onClick={handleLogout}>
-                            Logout
-                        </Button>
+                        <button className="btn btn-glass btn-sm px-4" onClick={handleLogout}>
+                            Sign Out
+                        </button>
                     </Nav>
                 </BsNavbar.Collapse>
             </Container>

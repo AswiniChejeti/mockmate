@@ -16,6 +16,8 @@ def create_resume(
     file_path: str,
     extracted_text: str,
     skills: list[str],
+    experience: list[str],
+    education: list[str],
 ) -> Resume:
     """Save a new resume record to the database."""
     db_resume = Resume(
@@ -24,6 +26,8 @@ def create_resume(
         file_path=file_path,
         extracted_text=extracted_text,
         skills_json=json.dumps(skills),
+        experience_json=json.dumps(experience),
+        education_json=json.dumps(education),
     )
     db.add(db_resume)
     db.commit()

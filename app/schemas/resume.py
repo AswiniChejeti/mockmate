@@ -14,6 +14,8 @@ class ResumeOut(BaseModel):
     id: int
     filename: str
     skills: List[str] = []
+    experience: List[str] = []
+    education: List[str] = []
     uploaded_at: Optional[datetime] = None
 
     class Config:

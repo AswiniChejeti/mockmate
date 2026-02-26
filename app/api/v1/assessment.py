@@ -129,3 +129,39 @@ def get_assessment_history(
 ):
     """Return all past assessment results for the logged-in user."""
     return get_user_assessments(db=db, user_id=current_user.id)
+
+
+from app.schemas.assessment import AssessmentDetailOut
+
+@router.get("/{assessment_id}", response_model=AssessmentDetailOut)
+def get_assessment_detail(
+    assessment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Return full details for a single assessment."""
+    assessment = get_assessment_by_id(db=db, assessment_id=assessment_id)
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if assessment.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    questions_data = json.loads(assessment.questions_json) if assessment.questions_json else []
+    answers_data = json.loads(assessment.answers_json) if assessment.answers_json else []
+    
+    correct_count = 0
+    answers_dict = {a.get("question_index"): a.get("selected_answer") for a in answers_data}
+    for idx, q in enumerate(questions_data):
+        if answers_dict.get(idx, "").upper() == q.get("correct_answer", "").upper():
+            correct_count += 1
+
+    return AssessmentDetailOut(
+        assessment_id=assessment.id,
+        skill=assessment.skill,
+        score=assessment.score or 0.0,
+        total_questions=assessment.total_questions or 0,
+        correct_count=correct_count,
+        taken_at=assessment.taken_at,
+        questions_data=questions_data,
+        answers_data=answers_data
+    )

@@ -80,21 +80,28 @@ def _parse_json_from_response(text: str) -> any:
 
 # ─── Public AI Functions ──────────────────────────────────────────────────────
 
-def extract_skills(resume_text: str) -> list[str]:
+def extract_resume_data(resume_text: str) -> dict:
     """
-    Asks the LLM to extract technical and soft skills from resume text.
+    Asks the LLM to extract technical skills, experience, and education from resume text.
 
     Returns:
-        A list of skill strings, e.g. ["Python", "FastAPI", "MySQL", "Communication"]
+        A dict: {"skills": [...], "experience": [...], "education": [...]}
     """
     prompt = f"""
 You are an expert HR recruiter and technical analyst.
 
-Extract all technical skills, programming languages, frameworks, tools,
-soft skills, and domain knowledge from the following resume text.
+Extract the following from the resume text:
+1. "skills": technical skills, programming languages, frameworks, tools, soft skills
+2. "experience": job titles, companies, and concise descriptions of experience
+3. "education": degrees, universities, graduation years
 
-Return ONLY a valid JSON array of strings. No explanation, no markdown.
-Example: ["Python", "FastAPI", "MySQL", "Machine Learning", "Communication"]
+Return ONLY a valid JSON object with these EXACT three keys containing arrays of strings. No explanation, no markdown.
+Example format:
+{{
+  "skills": ["Python", "FastAPI", "MySQL"],
+  "experience": ["Software Engineer at Acme Corp (2020-2023): Built API...", "Intern at Beta Inc"],
+  "education": ["B.S. Computer Science, XYZ University, 2022"]
+}}
 
 Resume Text:
 \"\"\"
@@ -103,13 +110,17 @@ Resume Text:
 """
     try:
         raw = _call_llm(prompt)
-        skills = _parse_json_from_response(raw)
-        if isinstance(skills, list):
-            return skills
-        return []
+        data = _parse_json_from_response(raw)
+        if isinstance(data, dict):
+            return {
+                "skills": data.get("skills", []),
+                "experience": data.get("experience", []),
+                "education": data.get("education", [])
+            }
+        return {"skills": [], "experience": [], "education": []}
     except Exception as e:
-        print(f"[AI] extract_skills error: {e}")
-        return ["Python", "Communication", "Problem Solving"]  # fallback
+        print(f"[AI] extract_resume_data error: {e}")
+        return {"skills": ["Python", "Communication"], "experience": [], "education": []}
 
 
 def generate_mcqs(skill: str, num_questions: int = 10, level: str = "Medium") -> list[dict]:
@@ -183,7 +194,7 @@ Number of questions: {num_questions}
         return fallback_questions
 
 
-def generate_interview_questions(resume_text: str, num_questions: int = 7) -> list[str]:
+def generate_interview_questions(resume_text: str, num_questions: int = 10, level: str = "Medium") -> list[str]:
     """
     Generates tailored mock interview questions based on the resume content.
 
@@ -194,7 +205,7 @@ def generate_interview_questions(resume_text: str, num_questions: int = 7) -> li
 You are a senior technical interviewer conducting a mock interview.
 
 Based on the candidate's resume below, generate {num_questions} insightful,
-personalized interview questions that:
+personalized interview questions evaluating at a {level} difficulty level. The questions should:
 1. Test their technical skills mentioned in the resume
 2. Ask about specific projects or experiences
 3. Include at least 1 behavioral question (e.g., "Tell me about a challenge...")

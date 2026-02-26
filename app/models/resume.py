@@ -21,6 +21,8 @@ class Resume(Base):
     file_path      = Column(String(500), nullable=False)
     extracted_text = Column(Text, nullable=True)       # Raw text from the PDF
     skills_json    = Column(Text, nullable=True)       # JSON string: ["Python","FastAPI",...]
+    experience_json= Column(Text, nullable=True)       # JSON string for experience
+    education_json = Column(Text, nullable=True)       # JSON string for education
     uploaded_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationship back to the user

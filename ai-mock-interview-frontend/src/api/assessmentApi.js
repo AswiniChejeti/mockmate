@@ -14,3 +14,8 @@ export const submitAssessment = async (assessment_id, answers) => {
     const response = await api.post('/assessment/submit', { assessment_id, answers });
     return response.data;
 };
+
+export const getAssessmentDetail = async (id) => {
+    const response = await api.get(`/assessment/${id}`);
+    return response.data;
+};
