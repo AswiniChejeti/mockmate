@@ -13,12 +13,16 @@ class InterviewStartRequest(BaseModel):
     """Configuration options for starting an interview"""
     level: str = "Medium"
     skills: List[str] = []
+    num_questions: int = 5
 
 
 class InterviewQuestion(BaseModel):
     """A single interview question generated from the resume."""
     index: int
     question: str
+    average_time: int = 90        # estimated seconds to answer
+    answer_type: str = "voice"    # "voice" = speak answer | "code" = write code/query
+    code_language: str = ""       # e.g. "python", "sql", "java" — populated when answer_type=="code"
 
 
 class InterviewStartResponse(BaseModel):

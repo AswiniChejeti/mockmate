@@ -684,3 +684,52 @@ body {
 .glow-text {
   text-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
 }
+
+/* ─── Accordion dark-theme overrides (HistoryModal) ───────────────────────── */
+
+/* Item container */
+.custom-accordion .accordion-item {
+  background-color: #1e293b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+/* Header button — reset Bootstrap's default white bg */
+.custom-accordion .accordion-button {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0.85rem 1.25rem;
+}
+
+/* Arrow icon colour */
+.custom-accordion .accordion-button::after {
+  filter: invert(1) brightness(1.5);
+}
+
+/* Hovered state */
+.custom-accordion .accordion-button:hover {
+  background-color: #263149 !important;
+}
+
+/* Expanded (open) state — keep dark */
+.custom-accordion .accordion-button:not(.collapsed) {
+  background-color: #1e3a5f !important;
+  color: #e0f2fe !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+/* Body of each accordion item */
+.custom-accordion .accordion-body {
+  background-color: #0f172a !important;
+  color: #cbd5e1;
+  padding: 1.25rem;
+}
+
+/* Collapse container */
+.custom-accordion .accordion-collapse {
+  border-top: 1px solid #334155;
+}

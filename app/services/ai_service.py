@@ -37,11 +37,13 @@ def _call_llm(prompt: str) -> str:
     elif provider == "gemini":
         from google import genai
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        # Try models in order — fall through if one is quota-exhausted
+        # Confirmed working models (verified via test_ai.py against this API key)
+        # gemini-2.0-flash / gemini-2.5-flash are quota-exhausted on the free tier
         gemini_models = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
+            "gemini-flash-latest",            # works, good quota
+            "gemini-flash-lite-latest",        # works, highest quota
+            "gemini-2.5-flash-lite",           # works, fallback
+            "gemini-2.0-flash",               # try anyway in case quota resets
         ]
         last_error = None
         for model_name in gemini_models:
@@ -50,18 +52,22 @@ def _call_llm(prompt: str) -> str:
                     model=model_name,
                     contents=prompt,
                 )
-                print(f"[AI] Using model: {model_name}")
+                print(f"[AI] Used model: {model_name}")
                 return response.text.strip()
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     print(f"[AI] {model_name} quota exhausted, trying next model...")
-                    last_error = e
-                    continue
                 else:
-                    raise  # Re-raise non-quota errors immediately
-        # All models exhausted
+                    print(f"[AI] {model_name} failed ({type(e).__name__}): {err_str[:100]} -- trying next model...")
+                last_error = e
+                continue
+        # All models failed
+        print(f"[AI] All Gemini models failed. Last error: {last_error}")
         raise last_error
+
+
+
 
     else:
         raise ValueError(f"Unknown AI_PROVIDER: '{provider}'. Set 'openai' or 'gemini' in .env")
@@ -70,11 +76,36 @@ def _call_llm(prompt: str) -> str:
 def _parse_json_from_response(text: str) -> any:
     """
     Extracts and parses JSON from an LLM response.
-    LLMs sometimes wrap JSON in markdown code blocks (```json ... ```)
-    so we strip those before parsing.
+    Tries multiple strategies because LLMs often wrap JSON in markdown
+    code blocks, add explanatory text before/after, or mix formats.
     """
-    # Remove markdown code fences if present
-    text = re.sub(r"```(?:json)?", "", text).strip().rstrip("```").strip()
+    if not text:
+        raise ValueError("Empty LLM response")
+
+    # Strategy 1: strip ALL markdown fences and try direct parse
+    clean = re.sub(r"```(?:json|python)?\s*", "", text).replace("```", "").strip()
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: find the first JSON object { ... }
+    match = re.search(r'\{.*\}', clean, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: find the first JSON array [ ... ]
+    match = re.search(r'\[.*\]', clean, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 4: last resort — try raw text as-is
     return json.loads(text)
 
 
@@ -127,14 +158,8 @@ def generate_mcqs(skill: str, num_questions: int = 10, level: str = "Medium") ->
     """
     Generates multiple-choice questions (MCQs) for a given skill and difficulty level.
 
-    Args:
-        skill: The topic/skill to generate questions about (e.g. "Python")
-        num_questions: How many questions to generate
-        level: Difficulty level — "Easy", "Medium", or "Hard"
-
     Returns:
-        List of dicts with keys: question, options (list of {key, value}),
-        correct_answer, explanation
+        List of dicts with keys: question, options, correct_answer, explanation, average_time
     """
     prompt = f"""
 You are an expert technical interviewer.
@@ -145,7 +170,8 @@ Difficulty level: {level}
 - Medium: Applied knowledge and common patterns
 - Hard: Advanced concepts, edge cases, optimizations
 
-Each question must have exactly 4 options (A, B, C, D), one correct answer, and a brief explanation.
+Each question must have exactly 4 options (A, B, C, D), one correct answer, a brief explanation,
+and an `average_time` in seconds a candidate would need to answer it (typically 30-90 seconds).
 
 Return ONLY valid JSON — a list of exactly {num_questions} objects with this exact structure:
 [
@@ -158,7 +184,8 @@ Return ONLY valid JSON — a list of exactly {num_questions} objects with this e
       {{"key": "D", "value": "Option 4"}}
     ],
     "correct_answer": "A",
-    "explanation": "Because X works by..."
+    "explanation": "Because X works by...",
+    "average_time": 45
   }}
 ]
 
@@ -176,7 +203,6 @@ Number of questions: {num_questions}
         return []
     except Exception as e:
         print(f"[AI] generate_mcqs error: {e}")
-        # Return fallback questions matching the requested count so the app doesn't crash
         fallback_questions = [
             {
                 "question": f"[Fallback Q{i+1}] What is a key concept in {skill}?",
@@ -188,61 +214,119 @@ Number of questions: {num_questions}
                 ],
                 "correct_answer": "A",
                 "explanation": f"Understanding core features of {skill} is fundamental.",
+                "average_time": 45,
             }
             for i in range(num_questions)
         ]
         return fallback_questions
 
 
-def generate_interview_questions(resume_text: str, num_questions: int = 10, level: str = "Medium") -> list[str]:
+def generate_interview_questions(
+    resume_text: str,
+    num_questions: int = 5,
+    level: str = "Medium",
+    skills: list = None
+) -> list[dict]:
     """
     Generates tailored mock interview questions based on the resume content.
 
     Returns:
-        A list of question strings.
+        A list of dicts: [{"question": str, "average_time": int (seconds)}, ...]
     """
-    prompt = f"""
-You are a senior technical interviewer conducting a mock interview.
+    # num_questions and skills are BOTH strictly enforced in the prompt AND by slicing
+    skill_restriction = ""
+    resume_section = ""
 
-Based on the candidate's resume below, generate {num_questions} insightful,
-personalized interview questions evaluating at a {level} difficulty level. The questions should:
-1. Test their technical skills mentioned in the resume
-2. Ask about specific projects or experiences
-3. Include at least 1 behavioral question (e.g., "Tell me about a challenge...")
-4. Are open-ended (not yes/no questions)
+    if skills:
+        skill_list = ", ".join(skills)
+        n = len(skills)
+        # When skills are explicitly selected, do NOT include resume text at all.
+        # The resume causes the LLM to drift toward all resume skills.
+        # Instead, just tell it which skills to focus on.
+        skill_restriction = f"""
+FOCUS SKILLS: {skill_list}
 
-Return ONLY a valid JSON array of question strings. No numbering, no markdown.
-Example: ["Tell me about your experience with FastAPI.", "How did you handle ..."]
-
-Resume:
+You must generate questions ONLY about the above {n} skill(s).
+Do NOT ask about any other technology even if you know the candidate might know it.
+Every question must directly test one of: {skill_list}
+"""
+    else:
+        # No skill filter: use resume for context
+        resume_section = f"""
+Candidate Resume (use this to personalize questions):
 \"\"\"
-{resume_text[:4000]}
+{resume_text[:3000]}
 \"\"\"
 """
+
+    prompt = f"""
+You are a senior technical interviewer.
+
+Generate EXACTLY {num_questions} interview question(s) at {level} difficulty.
+IMPORTANT: Do NOT generate more or fewer than {num_questions} question(s).
+{skill_restriction}
+For each question ALSO decide:
+- `answer_type`: either "voice" or "code"
+  - Use "voice" for conceptual/theory/explanation questions (candidate will speak the answer)
+  - Use "code" for questions that require writing actual code, SQL queries, algorithms, or pseudocode
+- `code_language`: only when answer_type is "code" — set to one of: "python", "sql", "java", "javascript", "cpp", "generic"
+  Leave as "" if answer_type is "voice"
+- `average_time`: estimated seconds a good candidate needs (60-180)
+
+Return ONLY a valid JSON array of EXACTLY {num_questions} item(s). No extra text, no markdown.
+Format:
+[
+  {{"question": "...", "answer_type": "voice", "code_language": "", "average_time": 90}},
+  {{"question": "Write a SQL query to...", "answer_type": "code", "code_language": "sql", "average_time": 120}}
+]
+{resume_section}"""
+
     try:
         raw = _call_llm(prompt)
         questions = _parse_json_from_response(raw)
         if isinstance(questions, list):
-            return questions[:num_questions]
+            result = []
+            for q in questions:
+                if isinstance(q, str):
+                    result.append({"question": q, "average_time": 90, "answer_type": "voice", "code_language": ""})
+                elif isinstance(q, dict):
+                    result.append({
+                        "question": q.get("question", str(q)),
+                        "average_time": int(q.get("average_time", 90)),
+                        "answer_type": q.get("answer_type", "voice"),
+                        "code_language": q.get("code_language", ""),
+                    })
+            # Hard-truncate regardless of what LLM returned
+            return result[:num_questions]
         return []
     except Exception as e:
         print(f"[AI] generate_interview_questions error: {e}")
-        return [
-            "Tell me about yourself and your technical background.",
-            "What is your most challenging project? How did you overcome obstacles?",
-            "Explain a complex technical concept you have worked with recently.",
+        skill_name = skills[0] if skills else "technical"
+        fallbacks = [
+            {"question": f"Explain a real project where you applied {skill_name} and what challenges you faced.", "average_time": 120, "answer_type": "voice", "code_language": ""},
+            {"question": f"What are the key concepts of {skill_name} you use most often and why?", "average_time": 90, "answer_type": "voice", "code_language": ""},
+            {"question": f"How do you debug issues related to {skill_name} in production?", "average_time": 90, "answer_type": "voice", "code_language": ""},
+            {"question": f"Describe a time you optimized code using {skill_name}.", "average_time": 120, "answer_type": "voice", "code_language": ""},
+            {"question": f"How would you explain {skill_name} to a junior developer?", "average_time": 90, "answer_type": "voice", "code_language": ""},
         ]
+        return fallbacks[:num_questions]
 
 
 def evaluate_interview_answer(question: str, answer: str) -> dict:
     """
     Evaluates a candidate's answer to an interview question using AI.
-
-    Returns:
-        A dict with keys: feedback (str), score (float 0-10)
+    Returns: dict with keys: feedback (str), score (float 0-10)
+    Empty/blank answers are returned immediately with score=0 without calling the AI.
     """
+    # No answer given — skip AI call, return 0 immediately
+    if not answer or not answer.strip():
+        return {
+            "feedback": "No answer was provided for this question. In an interview, skipping a question results in a score of 0.",
+            "score": 0.0,
+        }
+
     prompt = f"""
-You are a senior technical interviewer evaluating a candidate's answer.
+You are a senior technical interviewer evaluating a candidate's spoken answer.
 
 Question: {question}
 
@@ -254,23 +338,30 @@ Evaluate the answer on:
 3. Depth of understanding
 4. Real-world applicability
 
-Return ONLY valid JSON with this exact structure:
+Return ONLY valid JSON. No extra text before or after. No markdown fences.
 {{
   "feedback": "Your detailed feedback here...",
   "score": 7.5
 }}
 
 The score must be a number between 0 and 10.
+If the answer is completely irrelevant or nonsensical, score it 0.
+Do not give a score of 5 as a default — base it strictly on the quality of the answer.
 """
+    raw = None
     try:
         raw = _call_llm(prompt)
+        print(f"[AI] evaluate raw response (first 300 chars): {raw[:300]}")
         result = _parse_json_from_response(raw)
         if isinstance(result, dict) and "feedback" in result and "score" in result:
             return {
                 "feedback": str(result["feedback"]),
-                "score": float(result.get("score", 5.0)),
+                "score": max(0.0, min(10.0, float(result.get("score", 0.0)))),
             }
-        return {"feedback": "Could not evaluate at this time.", "score": 5.0}
+        print(f"[AI] evaluate: unexpected result structure: {result}")
+        return {"feedback": "Could not evaluate this answer at this time.", "score": 0.0}
     except Exception as e:
-        print(f"[AI] evaluate_interview_answer error: {e}")
-        return {"feedback": "Evaluation service temporarily unavailable.", "score": 5.0}
+        print(f"[AI] evaluate_interview_answer error: {type(e).__name__}: {e}")
+        if raw:
+            print(f"[AI] raw response that caused error: {raw[:500]}")
+        return {"feedback": f"Evaluation service temporarily unavailable ({type(e).__name__}). Score set to 0.", "score": 0.0}

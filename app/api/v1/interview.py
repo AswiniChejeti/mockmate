@@ -70,30 +70,37 @@ def start_interview(
             detail="No resume found. Please upload your resume before starting an interview.",
         )
 
-    # Convert resume text and targeted skills into the generation 
+    # Pass only the raw resume text — skill restriction is enforced directly in the AI prompt
     resume_context = resume.extracted_text or ""
-    if payload.skills:
-        resume_context += f"\n\nTarget Skills for Interview: {', '.join(payload.skills)}"
 
-    questions = generate_interview_questions(
+    questions_data = generate_interview_questions(
         resume_text=resume_context,
-        num_questions=10,
-        level=payload.level
+        num_questions=payload.num_questions,
+        level=payload.level,
+        skills=payload.skills if payload.skills else None,
     )
-    if not questions:
+    if not questions_data:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not generate interview questions. Please try again.",
         )
 
+    # Store as list of dicts in DB (questions_data is now list[dict])
     db_session = create_interview_session(
         db=db,
         user_id=current_user.id,
-        questions=questions,
+        questions=[q["question"] for q in questions_data],  # store just text for legacy compat
     )
 
     interview_questions = [
-        InterviewQuestion(index=i, question=q) for i, q in enumerate(questions)
+        InterviewQuestion(
+            index=i,
+            question=q["question"],
+            average_time=q.get("average_time", 90),
+            answer_type=q.get("answer_type", "voice"),
+            code_language=q.get("code_language", ""),
+        )
+        for i, q in enumerate(questions_data)
     ]
     return InterviewStartResponse(
         session_id=db_session.id,

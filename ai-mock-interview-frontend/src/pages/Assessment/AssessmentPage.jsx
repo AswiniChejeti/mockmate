@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Container, Row, Col } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import Navbar from '../../components/Navbar';
 import { getResumeSkills, generateAssessment, submitAssessment } from '../../api/assessmentApi';
+import { verifyFace } from '../../api/interviewApi';
 import { toast, loader, closeLoader, confirm } from '../../utils/swal';
 
 const LEVEL_CONFIG = {
@@ -12,12 +13,18 @@ const LEVEL_CONFIG = {
 };
 
 const scoreColor = s => s >= 7 ? '#10b981' : s >= 4 ? '#f59e0b' : '#ef4444';
-const scoreVariant = s => s >= 7 ? 'success' : s >= 4 ? 'warning' : 'danger';
 const scoreEmoji = s => s >= 9 ? '🏆' : s >= 7 ? '🎉' : s >= 4 ? '👍' : '📚';
 const scoreMsg = s => s >= 9 ? "Outstanding! You're an expert! 🌟"
     : s >= 7 ? 'Great job! Keep it up! 💪'
         : s >= 4 ? 'Good effort! More practice will help. 📖'
             : 'Keep studying! Review the fundamentals. 📚';
+
+const fmt = secs => {
+    if (secs === null || secs === undefined) return '--:--';
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+};
 
 export default function AssessmentPage() {
     const [step, setStep] = useState(1);
@@ -36,6 +43,17 @@ export default function AssessmentPage() {
 
     const [result, setResult] = useState(null);
 
+    // ── Timer state ───────────────────────────────────────────────────────────
+    const [timeLeft, setTimeLeft] = useState(null);
+    const [totalTime, setTotalTime] = useState(null);
+    const timerRef = useRef(null);
+
+    // ── Hidden camera for bg face checks ─────────────────────────────────────
+    const hiddenVideoRef = useRef(null);
+    const hiddenStreamRef = useRef(null);
+    const faceCheckIntervalRef = useRef(null);
+    const [faceWarnings, setFaceWarnings] = useState(0);
+
     useEffect(() => {
         (async () => {
             try {
@@ -46,8 +64,80 @@ export default function AssessmentPage() {
                 toast('warning', 'Upload your resume first to get skill suggestions', 4000);
             }
         })();
+        return () => {
+            clearInterval(timerRef.current);
+            clearInterval(faceCheckIntervalRef.current);
+            hiddenStreamRef.current?.getTracks().forEach(t => t.stop());
+        };
     }, []);
 
+    // ── Background camera + face detection ───────────────────────────────────
+    const startBgCamera = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            hiddenStreamRef.current = stream;
+            if (hiddenVideoRef.current) hiddenVideoRef.current.srcObject = stream;
+        } catch { /* camera unavailable – face checks will be skipped */ }
+    };
+
+    const stopBgCamera = () => {
+        clearInterval(faceCheckIntervalRef.current);
+        hiddenStreamRef.current?.getTracks().forEach(t => t.stop());
+        hiddenStreamRef.current = null;
+    };
+
+    const captureFrame = () => {
+        const v = hiddenVideoRef.current;
+        if (!v || v.videoWidth === 0) return null;
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth; c.height = v.videoHeight;
+        c.getContext('2d').drawImage(v, 0, 0);
+        return c.toDataURL('image/jpeg', 0.8);
+    };
+
+    const startBgFaceCheck = useCallback((autoSubmitFn) => {
+        clearInterval(faceCheckIntervalRef.current);
+        faceCheckIntervalRef.current = setInterval(async () => {
+            const base64 = captureFrame();
+            if (!base64) return;
+            try {
+                const res = await verifyFace(base64);
+                if (!res.verified) {
+                    setFaceWarnings(prev => {
+                        const next = prev + 1;
+                        if (next >= 2) {
+                            toast('error', '⚠️ Unauthorized person detected! Assessment auto-submitted.', 5000);
+                            clearInterval(faceCheckIntervalRef.current);
+                            autoSubmitFn();
+                        } else {
+                            toast('warning', `⚠️ Face mismatch detected (Warning ${next}/2). Assessment will auto-close if repeated.`, 4000);
+                        }
+                        return next;
+                    });
+                }
+            } catch { /* silent */ }
+        }, 15000);
+    }, []);
+
+    // ── Timer ─────────────────────────────────────────────────────────────────
+    const startTimer = useCallback((totalSecs, autoSubmitFn) => {
+        clearInterval(timerRef.current);
+        setTimeLeft(totalSecs);
+        setTotalTime(totalSecs);
+        timerRef.current = setInterval(() => {
+            setTimeLeft(prev => {
+                if (prev <= 1) {
+                    clearInterval(timerRef.current);
+                    toast('warning', "⏰ Time's up! Submitting your assessment now.", 3000);
+                    setTimeout(() => autoSubmitFn(), 500);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+    }, []);
+
+    // ── Generate ──────────────────────────────────────────────────────────────
     const handleGenerate = async () => {
         if (!selectedSkill) { toast('warning', 'Please select a skill first'); return; }
         loader('⚡ Generating your assessment...');
@@ -60,8 +150,21 @@ export default function AssessmentPage() {
             setTestSkill(data.skill);
             setTestLevel(data.level);
             setAnswers({});
+            setFaceWarnings(0);
             setStep(2);
-            toast('success', `${data.questions.length} questions ready!`, 2000);
+            toast('success', `${data.questions.length} questions ready! Timer starting…`, 2000);
+
+            // Calculate total time from average_time per question
+            const total = data.questions.reduce((sum, q) => sum + (q.average_time || 60), 0);
+
+            // Start hidden camera + bg face detection
+            await startBgCamera();
+
+            // Start timer
+            setTimeout(() => {
+                startTimer(total, () => doSubmit(true));
+                startBgFaceCheck(() => doSubmit(true));
+            }, 500);
         } catch (err) {
             closeLoader();
             toast('error', err.response?.data?.detail || 'Failed to generate assessment. Try again.', 4000);
@@ -72,16 +175,14 @@ export default function AssessmentPage() {
 
     const answeredCount = Object.keys(answers).length;
     const progress = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
+    const timerPct = totalTime > 0 ? (timeLeft / totalTime) * 100 : 0;
+    const timerColor = timerPct > 50 ? '#10b981' : timerPct > 25 ? '#f59e0b' : '#ef4444';
 
-    const handleSubmit = async () => {
-        if (answeredCount < questions.length) {
-            const res = await confirm(
-                'Unanswered Questions',
-                `You haven't answered ${questions.length - answeredCount} question(s). Submit anyway?`,
-                'Submit Anyway'
-            );
-            if (!res.isConfirmed) return;
-        }
+    // ── Submit ─────────────────────────────────────────────────────────────────
+    const doSubmit = useCallback(async (autoSubmit = false) => {
+        clearInterval(timerRef.current);
+        clearInterval(faceCheckIntervalRef.current);
+        stopBgCamera();
 
         loader('📊 Evaluating your answers...');
         setLoading(true);
@@ -97,18 +198,36 @@ export default function AssessmentPage() {
             setResult(data);
             setStep(3);
             const icon = data.score >= 7 ? 'success' : data.score >= 4 ? 'warning' : 'error';
-            toast(icon, `You scored ${data.score}/10!`, 3000);
+            toast(icon, `You scored ${data.score}/10!`, 2000);
         } catch (err) {
             closeLoader();
-            toast('error', err.response?.data?.detail || 'Submission failed. Try again.', 4000);
+            const detail = err?.response?.data?.detail;
+            const msg = detail
+                ? (typeof detail === 'string' ? detail : JSON.stringify(detail))
+                : 'Submission failed. Try again.';
+            toast('error', msg, 4000);
         } finally {
             setLoading(false);
         }
+    }, [questions, answers, assessmentId]);
+
+    const handleSubmit = async () => {
+        if (answeredCount < questions.length) {
+            const res = await confirm('Unanswered Questions',
+                `You haven't answered ${questions.length - answeredCount} question(s). Submit anyway?`,
+                'Submit Anyway');
+            if (!res.isConfirmed) return;
+        }
+        doSubmit(false);
     };
 
     const resetAssessment = () => {
+        clearInterval(timerRef.current);
+        clearInterval(faceCheckIntervalRef.current);
+        stopBgCamera();
         setStep(1); setResult(null); setAssessmentId(null);
         setQuestions([]); setAnswers({}); setTestSkill(''); setTestLevel('');
+        setTimeLeft(null); setTotalTime(null); setFaceWarnings(0);
     };
 
     const lvlCfg = LEVEL_CONFIG[testLevel] || LEVEL_CONFIG.Medium;
@@ -116,6 +235,10 @@ export default function AssessmentPage() {
     return (
         <div className="app-bg" style={{ minHeight: '100vh' }}>
             <Navbar />
+            {/* Hidden camera feed — completely invisible, purely for bg face checks */}
+            <video ref={hiddenVideoRef} autoPlay playsInline muted
+                style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', top: 0, left: 0 }} />
+
             <Container className="pb-5">
                 <div className="fade-in" style={{ marginBottom: '2rem' }}>
                     <h2 style={{ fontWeight: 800 }}>🧠 Skill Assessment</h2>
@@ -165,6 +288,10 @@ export default function AssessmentPage() {
                             }}>
                                 📌 You will be tested on <strong>{selectedSkill}</strong> with{' '}
                                 <strong>{numQuestions} {LEVEL_CONFIG[level].label}</strong> difficulty questions.
+                                <br />
+                                <span style={{ color: '#64748b', fontSize: '0.82rem' }}>
+                                    ⏱️ AI will set a per-question timer. Camera monitors for unauthorized persons (hidden).
+                                </span>
                             </div>
                         )}
 
@@ -178,32 +305,39 @@ export default function AssessmentPage() {
                 {/* ── Step 2: Test ────────────────────────────────────────── */}
                 {step === 2 && (
                     <div>
-                        {/* Sticky progress */}
+                        {/* Sticky progress + timer */}
                         <div className="sticky-progress fade-in">
                             <Container>
-                                <div style={{
-                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                    marginBottom: '0.5rem'
-                                }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: 8 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <span style={{ fontWeight: 700 }}>{testSkill}</span>
-                                        <span style={{
-                                            background: lvlCfg.bg, color: lvlCfg.color,
-                                            padding: '2px 10px', borderRadius: 20, fontSize: '0.78rem', fontWeight: 600
-                                        }}>
+                                        <span style={{ background: lvlCfg.bg, color: lvlCfg.color, padding: '2px 10px', borderRadius: 20, fontSize: '0.78rem', fontWeight: 600 }}>
                                             {lvlCfg.label}
                                         </span>
+                                        {faceWarnings > 0 && (
+                                            <span style={{ background: 'rgba(245,158,11,0.2)', color: '#f59e0b', padding: '2px 10px', borderRadius: 20, fontSize: '0.78rem', fontWeight: 600 }}>
+                                                ⚠️ {faceWarnings} warning(s)
+                                            </span>
+                                        )}
                                     </div>
-                                    <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
-                                        {answeredCount}/{questions.length} answered
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                        <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>{answeredCount}/{questions.length} answered</span>
+                                        {/* countdown timer */}
+                                        <span style={{
+                                            fontFamily: 'monospace', fontWeight: 800, fontSize: '1.2rem',
+                                            color: timerColor, transition: 'color 0.3s'
+                                        }}>
+                                            ⏱ {fmt(timeLeft)}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div style={{ background: '#334155', height: 6, borderRadius: 20 }}>
-                                    <div style={{
-                                        height: '100%', borderRadius: 20, transition: 'width 0.3s',
-                                        background: progress === 100 ? '#10b981' : 'linear-gradient(90deg, #6366f1, #0ea5e9)',
-                                        width: `${progress}%`
-                                    }} />
+                                {/* Answer progress bar */}
+                                <div style={{ background: '#334155', height: 4, borderRadius: 20, marginBottom: 3 }}>
+                                    <div style={{ height: '100%', borderRadius: 20, transition: 'width 0.3s', background: progress === 100 ? '#10b981' : 'linear-gradient(90deg,#6366f1,#0ea5e9)', width: `${progress}%` }} />
+                                </div>
+                                {/* Time remaining bar */}
+                                <div style={{ background: '#1e293b', height: 3, borderRadius: 20 }}>
+                                    <div style={{ height: '100%', borderRadius: 20, transition: 'width 1s linear, background 0.3s', background: timerColor, width: `${timerPct}%` }} />
                                 </div>
                             </Container>
                         </div>
@@ -212,16 +346,11 @@ export default function AssessmentPage() {
                         {questions.map((q, qIndex) => (
                             <div key={qIndex} className={`card p-4 mb-3 answer-card fade-in ${answers[qIndex] ? 'answered' : ''}`}>
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', marginBottom: '1rem' }}>
-                                    <span style={{
-                                        background: answers[qIndex] ? '#10b981' : '#334155',
-                                        color: '#fff', borderRadius: 8, padding: '2px 10px',
-                                        fontSize: '0.8rem', fontWeight: 700, flexShrink: 0
-                                    }}>
+                                    <span style={{ background: answers[qIndex] ? '#10b981' : '#334155', color: '#fff', borderRadius: 8, padding: '2px 10px', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0 }}>
                                         Q{qIndex + 1}
                                     </span>
                                     <p style={{ margin: 0, fontWeight: 500, lineHeight: 1.5 }}>{q.question}</p>
                                 </div>
-
                                 <div style={{ paddingLeft: '0.5rem' }}>
                                     {q.options.map((opt, oIndex) => {
                                         const isSelected = answers[qIndex] === opt.key;
@@ -233,8 +362,7 @@ export default function AssessmentPage() {
                                                 border: `1px solid ${isSelected ? '#6366f1' : '#334155'}`,
                                                 background: isSelected ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.02)',
                                             }}>
-                                                <input type="radio" name={`q-${qIndex}`} value={opt.key}
-                                                    checked={isSelected}
+                                                <input type="radio" name={`q-${qIndex}`} value={opt.key} checked={isSelected}
                                                     onChange={() => setAnswers(a => ({ ...a, [qIndex]: opt.key }))}
                                                     style={{ display: 'none' }} />
                                                 <span style={{
@@ -246,10 +374,7 @@ export default function AssessmentPage() {
                                                 }}>
                                                     {isSelected && '✓'}
                                                 </span>
-                                                <span>
-                                                    <strong style={{ color: '#94a3b8' }}>{opt.key}.</strong>{' '}
-                                                    {opt.value}
-                                                </span>
+                                                <span><strong style={{ color: '#94a3b8' }}>{opt.key}.</strong> {opt.value}</span>
                                             </label>
                                         );
                                     })}
@@ -271,25 +396,15 @@ export default function AssessmentPage() {
                 {step === 3 && result && (
                     <div className="card p-5 text-center fade-in">
                         <div style={{ fontSize: '4rem', marginBottom: '0.5rem' }}>{scoreEmoji(result.score)}</div>
-                        <h1 style={{
-                            fontSize: '4rem', fontWeight: 900, color: scoreColor(result.score),
-                            textShadow: `0 0 30px ${scoreColor(result.score)}66`
-                        }}>
+                        <h1 style={{ fontSize: '4rem', fontWeight: 900, color: scoreColor(result.score), textShadow: `0 0 30px ${scoreColor(result.score)}66` }}>
                             {result.score}/10
                         </h1>
 
                         <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', margin: '0.75rem 0 1rem' }}>
-                            <span style={{
-                                background: LEVEL_CONFIG[testLevel]?.bg || 'rgba(99,102,241,0.15)',
-                                color: LEVEL_CONFIG[testLevel]?.color || '#818cf8',
-                                padding: '4px 14px', borderRadius: 20, fontSize: '0.85rem', fontWeight: 600
-                            }}>
+                            <span style={{ background: LEVEL_CONFIG[testLevel]?.bg || 'rgba(99,102,241,0.15)', color: LEVEL_CONFIG[testLevel]?.color || '#818cf8', padding: '4px 14px', borderRadius: 20, fontSize: '0.85rem', fontWeight: 600 }}>
                                 {LEVEL_CONFIG[testLevel]?.label}
                             </span>
-                            <span style={{
-                                background: 'rgba(99,102,241,0.15)', color: '#818cf8',
-                                padding: '4px 14px', borderRadius: 20, fontSize: '0.85rem', fontWeight: 600
-                            }}>
+                            <span style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8', padding: '4px 14px', borderRadius: 20, fontSize: '0.85rem', fontWeight: 600 }}>
                                 {result.skill}
                             </span>
                         </div>
@@ -301,11 +416,7 @@ export default function AssessmentPage() {
 
                         <div style={{ maxWidth: 400, margin: '0 auto 1.5rem' }}>
                             <div style={{ background: '#334155', height: 20, borderRadius: 20, overflow: 'hidden' }}>
-                                <div style={{
-                                    height: '100%', borderRadius: 20, transition: 'width 1s ease',
-                                    background: scoreColor(result.score),
-                                    width: `${(result.correct_count / result.total_questions) * 100}%`,
-                                }} />
+                                <div style={{ height: '100%', borderRadius: 20, transition: 'width 1s ease', background: scoreColor(result.score), width: `${(result.correct_count / result.total_questions) * 100}%` }} />
                             </div>
                             <small style={{ color: '#64748b' }}>{result.correct_count}/{result.total_questions} correct</small>
                         </div>

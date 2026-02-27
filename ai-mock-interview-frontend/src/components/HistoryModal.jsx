@@ -1,5 +1,7 @@
 import { Modal, Button, Accordion } from 'react-bootstrap';
 
+const SERVER_ROOT = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1').replace('/api/v1', '');
+
 export default function HistoryModal({ show, onHide, type, data }) {
     if (!data) return null;
 
@@ -38,17 +40,20 @@ export default function HistoryModal({ show, onHide, type, data }) {
                 </div>
 
                 {isInterview && data.video_url && (
-                    <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
-                        <h6 style={{ color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-                            Session Recording
+                    <div style={{ marginBottom: '2rem' }}>
+                        <h6 style={{ color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
+                            🎵 Session Recording — Hear Your Spoken Answers
                         </h6>
                         <video
                             controls
-                            src={`${import.meta.env.VITE_API_BASE_URL.replace('/api/v1', '')}${data.video_url}`}
-                            style={{ width: '100%', maxWidth: '600px', borderRadius: '8px', border: '1px solid #334155', backgroundColor: '#000' }}
+                            src={`${SERVER_ROOT}${data.video_url}`}
+                            style={{ width: '100%', maxWidth: '640px', borderRadius: '10px', border: '1px solid #334155', backgroundColor: '#000', display: 'block' }}
                         >
                             Your browser does not support the video tag.
                         </video>
+                        <p style={{ color: '#475569', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                            Audio + video captured during the interview session
+                        </p>
                     </div>
                 )}
 
